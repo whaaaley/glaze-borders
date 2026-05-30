@@ -34,12 +34,15 @@ public struct CommitConfig: Equatable, Sendable {
         maxLength: CommitDefaults.maxLength)
 
     /// Flatten every configured scope category, or `nil` when no scopes are set.
+    /// Deduped and sorted so the "Allowed scopes are: …" message is deterministic
+    /// regardless of dictionary iteration order.
     public var allScopes: [String]? {
         guard let scopes else { return nil }
-        return scopes.values.flatMap { $0 }
+        return Set(scopes.values.flatMap { $0 }).sorted()
     }
 
-    /// The active configuration. Kept as a function to mirror `loadConfig()` and
-    /// leave room for reading project config later.
+    /// The active configuration. Currently always `.default` (no `scopes`), so
+    /// scope validation in `CommitValidator` is dormant until project-config
+    /// loading is implemented here; it is exercised by tests that inject `scopes`.
     public static func load() -> CommitConfig { .default }
 }

@@ -107,6 +107,16 @@ struct CommitValidatorInvalidDescriptionTests {
         expectInvalid("feat: Add feature", defaultConfig, contains: "lowercase")
     }
 
+    @Test("non-ASCII uppercase start is also rejected")
+    func nonASCIIUppercaseStart() {
+        expectInvalid("feat: Éclair support", defaultConfig, contains: "lowercase")
+    }
+
+    @Test("a digit-leading description is allowed")
+    func digitStartAllowed() {
+        expectValid("perf: 2x faster startup", defaultConfig)
+    }
+
     @Test("trailing period")
     func trailingPeriod() {
         expectInvalid("feat: add feature.", defaultConfig, contains: "punctuation")

@@ -26,14 +26,13 @@ public enum CommitParser {
             ])
         }
 
-        if parenClose == nil {
+        guard let open = parenOpen, let close = parenClose else {
+            // Unreachable: the nil cases are handled above. Restated as a guard so
+            // the bindings are non-optional without a force-unwrap.
             throw CliError("Found opening parenthesis without closing parenthesis", [
                 "Use the format: <type>(<scope>): <description>",
             ])
         }
-
-        let open = parenOpen!
-        let close = parenClose!
 
         if close < open {
             throw CliError("Mismatched parentheses in commit message", [
