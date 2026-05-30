@@ -1,47 +1,30 @@
 # glaze-borders
 
-A native macOS window-border daemon for [GlazeWM](https://github.com/glzr-io/glazewm) — *if Apple made borders.*
+A native macOS window-border daemon for [GlazeWM](https://github.com/glzr-io/glazewm). It draws a single accent-colored border around the focused window, built in Swift on AppKit and the Accessibility API — no private frameworks.
 
-It draws a single, crisp accent-colored border around the focused window, with corner radii that match macOS Tahoe's own windows. Built in Swift on AppKit + the Accessibility API, with no private frameworks and no hidpi hacks.
+## Features
 
-## Why
+- **Focused-window only** — one border, your system accent color, resolved live so it tracks Appearance changes.
+- **Pixel-accurate** — draws in points and lets AppKit handle Retina scaling, so borders never land offset.
+- **Real geometry** — reads the actual window frame from the Accessibility API, so windows with a minimum size (Chrome, Slack) that overflow their tile still get a correct border.
+- **Follows everything** — focus changes, moves, resizes, and fullscreen (`alt+f`), via an AX observer plus a low-frequency safety poll.
+- **Tahoe-matched corners** — toolbar windows (Finder, System Settings) use a larger radius than plain windows (terminals, editors); the class is detected via AX and cached.
+- **Snappy** — a single reused overlay window, no animations, instant focus follow.
 
-JankyBorders is the usual choice, but on macOS Tahoe (26) it has a hidpi corner-offset bug, high GPU usage, and doesn't follow GlazeWM's window moves reliably. `glaze-borders` is a from-scratch replacement that:
-
-- **Draws in points, not pixels** — AppKit handles Retina scaling, so borders never land offset (the JankyBorders hidpi bug).
-- **Reads real geometry from the Accessibility API** — GlazeWM reports the frame it *wants*; apps with a minimum size (Chrome, Slack) overflow their tile. The border follows the *actual* window.
-- **Follows fullscreen and resize** via an AX observer plus a low-frequency safety poll — even when GlazeWM emits no event (e.g. `alt+f`).
-- **Matches Tahoe's per-type corner radii** — toolbar windows (Finder, System Settings) are rounder than plain windows (terminals, editors); classification is detected via AX and cached persistently.
-- **Uses your system accent color** — resolved live, so it tracks Appearance changes.
-- **Snappy** — a single pooled overlay window, no implicit animations, instant focus follow.
-
-## Architecture
-
-Functional core, imperative shell:
-
-- **Pure core** (`Geometry`, `RadiusResolver`, `Reconciler`) — no AppKit/AX, fully unit-testable. Given a snapshot of the world, decides what to draw.
-- **Imperative shell** (`Daemon`, `Overlay`, `AXWatcher`, `GlazeClient`) — gathers inputs (GlazeWM IPC, AX reads, screen) and applies the decision to AppKit.
-- **Persistent classification** (`Classifier`) — one-way sticky toolbar/plain cache at `~/.config/glaze-borders/classifications.json`.
-
-## Build & run
+## Install
 
 ```sh
 swift build -c release
-.build/release/glaze-borders
-```
-
-Install as a login agent (auto-start):
-
-```sh
 cp .build/release/glaze-borders ~/.local/bin/glaze-borders
-# load the LaunchAgent (see contrib/com.dustin.glaze-borders.plist)
 ```
 
-Requires Accessibility permission (System Settings → Privacy & Security → Accessibility).
+- Run directly: `glaze-borders`
+- Auto-start at login: load the LaunchAgent in `contrib/com.dustin.glaze-borders.plist`
+- Grant Accessibility permission: System Settings → Privacy & Security → Accessibility
 
 ## Configuration
 
-Defaults are baked in; these env vars override them for live tuning:
+Defaults are baked in. Override any of these with environment variables:
 
 | Variable | Meaning | Default |
 |---|---|---|
@@ -49,8 +32,16 @@ Defaults are baked in; these env vars override them for live tuning:
 | `GLAZE_BORDERS_OFFSET` | 0 = inner; negative pushes outward | 0 |
 | `GLAZE_BORDERS_RADIUS` | plain-window corner radius | 10 |
 | `GLAZE_BORDERS_RADIUS_TOOLBAR` | toolbar-window corner radius | 22 |
-| `GLAZE_BORDERS_POP` | `1` = native appear "pop" on focus | off |
+| `GLAZE_BORDERS_POP` | `1` = native appear animation on focus | off |
 | `GLAZE_BORDERS_DEBUG` | `1` = log to `/tmp/glaze-borders.debug.log` | off |
+
+## Architecture
+
+Functional core, imperative shell:
+
+- **Pure core** — `Geometry`, `RadiusResolver`, `Reconciler`. No AppKit or AX; given a snapshot of the world, decides what to draw. Fully unit-testable.
+- **Imperative shell** — `Daemon`, `Overlay`, `AXWatcher`, `GlazeClient`. Gathers inputs (GlazeWM IPC, AX reads, screen) and applies the decision to AppKit.
+- **Persistent classification** — `Classifier`. One-way sticky toolbar/plain cache at `~/.config/glaze-borders/classifications.json`.
 
 ## Tests
 
@@ -58,7 +49,8 @@ Defaults are baked in; these env vars override them for live tuning:
 swift test
 ```
 
-Unit tests cover the pure geometry/radius logic with input→output tables; integration tests cover the reconciler decision and classifier persistence.
+- Unit tests cover the pure geometry and radius logic with input/output tables.
+- Integration tests cover the reconciler decision and classifier persistence.
 
 ## License
 
