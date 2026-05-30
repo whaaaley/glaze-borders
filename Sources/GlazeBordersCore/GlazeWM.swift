@@ -110,15 +110,25 @@ struct SubEvent: Decodable {
     }
 }
 
+/// The window-state source the daemon depends on. A protocol so tests can
+/// inject a fake (e.g. to count queries) in place of the real `GlazeClient`.
+public protocol WindowSource: Sendable {
+    /// Authoritative snapshot of all windows.
+    func queryWindows() -> [GlazeWindow]
+    /// Stream of focus/geometry events; `onEvent` receives the focused window
+    /// parsed from each event's payload (or nil). Blocks until the stream ends.
+    func subscribe(events: [String], onEvent: @escaping @Sendable (GlazeWindow?) -> Void)
+}
+
 /// Thin client around the `glazewm` CLI: a one-shot `query windows`, and a
 /// long-lived `sub` stream whose every line is just a nudge to re-query.
-public final class GlazeClient: Sendable {
+public final class GlazeClient: WindowSource, Sendable {
     private let binary: String
     public init(binary: String = "/opt/homebrew/bin/glazewm") { self.binary = binary }
 
     /// Authoritative snapshot of all windows. Returns [] on any failure so the
     /// daemon degrades to "no borders" rather than crashing.
-    func queryWindows() -> [GlazeWindow] {
+    public func queryWindows() -> [GlazeWindow] {
         guard let out = run(["query", "windows"]),
               let data = out.data(using: .utf8) else { return [] }
         do {
@@ -140,7 +150,7 @@ public final class GlazeClient: Sendable {
     /// separate ~75ms `query windows` per event — the dominant switch-latency
     /// cost. Blocks the calling thread; run on a background queue. Returns when
     /// the subprocess exits (caller is expected to restart it).
-    func subscribe(events: [String], onEvent: @escaping @Sendable (GlazeWindow?) -> Void) {
+    public func subscribe(events: [String], onEvent: @escaping @Sendable (GlazeWindow?) -> Void) {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
         proc.arguments = ["sub", "--events"] + events

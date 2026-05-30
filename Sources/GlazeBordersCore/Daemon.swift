@@ -50,7 +50,7 @@ public struct Config {
 @MainActor
 public final class Daemon {
     private let cfg: Config
-    private let glaze: GlazeClient
+    private let glaze: WindowSource
     private var reconcileScheduled = false
     private var ax: AXWatcher!
 
@@ -68,7 +68,7 @@ public final class Daemon {
     private let classifier = Classifier()
     private var overlayWindowId: String?
 
-    public init(cfg: Config, glaze: GlazeClient) {
+    public init(cfg: Config, glaze: WindowSource) {
         self.cfg = cfg
         self.glaze = glaze
         // The AX observer fires whenever the focused window resizes/moves — even
@@ -92,8 +92,9 @@ public final class Daemon {
 
     /// Border the FOCUSED window only; unfocused windows get no border. Uses the
     /// focused window from the GlazeWM event (no per-event `query windows`), with
-    /// its real frame read from AX.
-    private func reconcile() {
+    /// its real frame read from AX. Internal (not private) so tests can drive a
+    /// single reconcile synchronously without the debounce/timer machinery.
+    func reconcile() {
         // The focused window comes from the latest event payload, not a query.
         // The safety poll falls back to a one-off query when we have nothing yet.
         let windows: [GlazeWindow]
