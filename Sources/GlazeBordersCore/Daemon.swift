@@ -91,8 +91,7 @@ public final class Daemon {
         // differ from GlazeWM's focus for floating windows like About This Mac).
         var front: Reconciler.Input.Front?
         if let app = NSWorkspace.shared.frontmostApplication,
-           let pid = Optional(app.processIdentifier),
-           let info = ax.watchFocusedWindow(pid: pid) {
+           let info = ax.watchFocusedWindow(pid: app.processIdentifier) {
             let appName = app.localizedName ?? ""
             // Persist the toolbar/plain class (one-way, sticky) before deciding.
             classifier.observe(appName, hasToolbar: info.hasToolbar)
