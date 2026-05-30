@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PKG_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+BIN="$PKG_DIR/.build/release/commit"
+
+# swift-testing/full toolchain lives in Xcode; build there without touching the
+# global xcode-select. Build the release binary once if it's missing.
+export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+if [ ! -x "$BIN" ]; then
+  swift build --package-path "$PKG_DIR" -c release >/dev/null
+fi
+
+exec "$BIN" --file "$1"
