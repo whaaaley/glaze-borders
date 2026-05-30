@@ -20,6 +20,21 @@ public struct GlazeWindow: Decodable, Equatable {
 
     public struct State: Decodable, Equatable {
         public let type: String
+        public init(type: String) { self.type = type }
+    }
+
+    public init(id: String, processName: String, hasFocus: Bool,
+                x: Int, y: Int, width: Int, height: Int,
+                state: State, displayState: String) {
+        self.id = id
+        self.processName = processName
+        self.hasFocus = hasFocus
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.state = state
+        self.displayState = displayState
     }
 
     /// Tiling or fullscreen windows that are currently shown get a border.
