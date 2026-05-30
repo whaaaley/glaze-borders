@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.dustin.glaze-borders</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/dustin/.local/bin/glaze-borders</string>
+	</array>
+
+	<!-- Custom Swift border daemon for GlazeWM. Reads window geometry from the
+	     Accessibility API and draws a border on the focused window. Replaces
+	     JankyBorders + the old zsh sync hook. -->
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
+
+	<key>StandardOutPath</key>
+	<string>/tmp/glaze-borders.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/glaze-borders.err.log</string>
+</dict>
+</plist>
