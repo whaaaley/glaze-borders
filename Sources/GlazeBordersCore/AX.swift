@@ -21,6 +21,17 @@ final class AXWatcher {
 
     init(onChange: @escaping () -> Void) { self.onChange = onChange }
 
+    // The AX observer holds an UNRETAINED pointer to self (see `attach`). If this
+    // watcher were deallocated while an observer is still attached, the callback's
+    // `takeUnretainedValue()` would be a use-after-free. Tear the observer down
+    // first. The watcher is owned by the main-actor `Daemon`, so deinit runs on
+    // the main thread; assumeIsolated lets us read the isolated stored state.
+    deinit {
+        MainActor.assumeIsolated {
+            Self.removeObserver(observer, from: watchedWindow)
+        }
+    }
+
     /// Real geometry + window-type info read from AX.
     struct WindowInfo {
         let frame: CGRect
@@ -40,7 +51,9 @@ final class AXWatcher {
         guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &focused) == .success,
               let ref = focused, CFGetTypeID(ref) == AXUIElementGetTypeID()
         else { return nil }
-        let window = ref as! AXUIElement
+        // CFTypeID verified above; unsafeDowncast documents the checked invariant
+        // without a force-cast that could crash if the guard is ever weakened.
+        let window = unsafeDowncast(ref, to: AXUIElement.self)
 
         // (Re)attach the observer if we're now watching a different window.
         if pid != watchedPid || !sameElement(window, watchedWindow) {
@@ -76,13 +89,19 @@ final class AXWatcher {
     }
 
     func detach() {
-        if let obs = observer, let win = watchedWindow {
-            AXObserverRemoveNotification(obs, win, kAXResizedNotification as CFString)
-            AXObserverRemoveNotification(obs, win, kAXMovedNotification as CFString)
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(),
-                                  AXObserverGetRunLoopSource(obs), .defaultMode)
-        }
+        Self.removeObserver(observer, from: watchedWindow)
         observer = nil; watchedWindow = nil; watchedPid = nil
+    }
+
+    /// Unregister an observer's notifications and run-loop source. `nonisolated`
+    /// and parameterized so both `detach()` and `deinit` can share it.
+    private nonisolated static func removeObserver(_ observer: AXObserver?,
+                                                   from window: AXUIElement?) {
+        guard let obs = observer, let win = window else { return }
+        AXObserverRemoveNotification(obs, win, kAXResizedNotification as CFString)
+        AXObserverRemoveNotification(obs, win, kAXMovedNotification as CFString)
+        CFRunLoopRemoveSource(CFRunLoopGetCurrent(),
+                              AXObserverGetRunLoopSource(obs), .defaultMode)
     }
 
     // MARK: - private
@@ -117,9 +136,11 @@ final class AXWatcher {
         guard AXUIElementCopyAttributeValue(el, attr as CFString, &ref) == .success,
               let value = ref, CFGetTypeID(value) == AXValueGetTypeID()
         else { return nil }
+        // CFTypeID verified above (see watchFocusedWindow for the rationale).
+        let axValue = unsafeDowncast(value, to: AXValue.self)
         let out = UnsafeMutablePointer<T>.allocate(capacity: 1)
         defer { out.deallocate() }
-        guard AXValueGetValue(value as! AXValue, kind, out) else { return nil }
+        guard AXValueGetValue(axValue, kind, out) else { return nil }
         return out.pointee
     }
 }

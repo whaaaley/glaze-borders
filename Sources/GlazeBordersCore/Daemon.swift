@@ -101,7 +101,7 @@ public final class Daemon {
         let input = Reconciler.Input(
             windows: windows,
             front: front,
-            screenFrame: NSScreen.main?.frame)
+            screenFrame: screenFrame(for: front?.frame))
 
         // --- Pure core: decide what to draw (fully tested in isolation) ---
         let command = Reconciler.decide(
@@ -140,6 +140,26 @@ public final class Daemon {
         Log.line("reconcile: window=\(command.windowId) radius=\(command.cornerRadius)")
     }
 
+    /// The AppKit frame of the screen a window lives on, for the y-flip. Using the
+    /// main screen unconditionally misplaces the border on a secondary display of
+    /// a different height, so we pick the screen the window overlaps most.
+    ///
+    /// `windowFrame` is in AX/CG global coords (top-left origin). AppKit's global
+    /// space is bottom-left with the PRIMARY screen as the reference, so we flip
+    /// against the primary screen height before intersecting with screen frames.
+    private func screenFrame(for windowFrame: CGRect?) -> CGRect? {
+        let screens = NSScreen.screens.map(\.frame)
+        guard let windowFrame else { return screens.first }
+        // Primary screen is the one whose AppKit origin is (0, 0).
+        let primaryHeight = screens.first(where: { $0.origin == .zero })?.height
+            ?? screens.first?.height ?? windowFrame.height
+        let appKitFrame = CGRect(
+            x: windowFrame.origin.x,
+            y: primaryHeight - windowFrame.origin.y - windowFrame.height,
+            width: windowFrame.width, height: windowFrame.height)
+        return ScreenPick.best(for: appKitFrame, among: screens)
+    }
+
     /// Tear down the current overlay (if any) and forget which window it wrapped.
     private func hideOverlay() {
         guard let ov = overlay else { return }
@@ -164,9 +184,14 @@ public final class Daemon {
             DispatchQueue.main.async { self?.scheduleReconcile() }
         }
         DispatchQueue.global(qos: .userInitiated).async {
+            // Back off on repeated immediate exits so a missing/broken `glazewm`
+            // can't spin a silent hot-loop; reset once a subscription lasts a while.
+            var backoff: TimeInterval = 1.0
             while true {
                 glaze.subscribe(events: events, onEvent: onNudge)
-                Thread.sleep(forTimeInterval: 1.0)  // sub exited; back off then retry
+                Log.line("glazewm sub exited; retrying in \(backoff)s")
+                Thread.sleep(forTimeInterval: backoff)
+                backoff = min(backoff * 2, 30.0)
             }
         }
 

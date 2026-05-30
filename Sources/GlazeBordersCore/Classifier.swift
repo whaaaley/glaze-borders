@@ -26,7 +26,11 @@ public final class Classifier {
         } else {
             let dir = FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".config/glaze-borders", isDirectory: true)
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            } catch {
+                Log.line("classifier: could not create \(dir.path): \(error)")
+            }
             self.url = dir.appendingPathComponent("classifications.json")
         }
         load()
@@ -51,14 +55,24 @@ public final class Classifier {
     // MARK: - persistence
 
     private func load() {
-        guard let data = try? Data(contentsOf: url),
-              let raw = try? JSONDecoder().decode([String: String].self, from: data)
-        else { return }
-        for (k, v) in raw { if let kind = Kind(rawValue: v) { map[k] = kind } }
+        // A missing file is normal on first run — only a present-but-unreadable or
+        // corrupt file is worth surfacing.
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        do {
+            let data = try Data(contentsOf: url)
+            let raw = try JSONDecoder().decode([String: String].self, from: data)
+            for (k, v) in raw { if let kind = Kind(rawValue: v) { map[k] = kind } }
+        } catch {
+            Log.line("classifier: could not load \(url.path): \(error)")
+        }
     }
 
     private func save() {
-        let raw = map.mapValues { $0.rawValue }
-        if let data = try? JSONEncoder().encode(raw) { try? data.write(to: url) }
+        do {
+            let raw = map.mapValues { $0.rawValue }
+            try JSONEncoder().encode(raw).write(to: url)
+        } catch {
+            Log.line("classifier: could not save \(url.path): \(error)")
+        }
     }
 }

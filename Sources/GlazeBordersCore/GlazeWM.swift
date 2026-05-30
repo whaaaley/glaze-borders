@@ -48,6 +48,7 @@ public struct GlazeWindow: Decodable, Equatable {
 private struct Envelope<T: Decodable>: Decodable {
     let data: T
     let success: Bool
+    let error: String?
 }
 
 private struct WindowsQuery: Decodable { let windows: [GlazeWindow] }
@@ -62,10 +63,18 @@ public final class GlazeClient: Sendable {
     /// daemon degrades to "no borders" rather than crashing.
     func queryWindows() -> [GlazeWindow] {
         guard let out = run(["query", "windows"]),
-              let data = out.data(using: .utf8),
-              let env = try? JSONDecoder().decode(Envelope<WindowsQuery>.self, from: data)
-        else { return [] }
-        return env.data.windows
+              let data = out.data(using: .utf8) else { return [] }
+        do {
+            let env = try JSONDecoder().decode(Envelope<WindowsQuery>.self, from: data)
+            guard env.success else {
+                Log.line("glazewm query windows reported failure: \(env.error ?? "unknown")")
+                return []
+            }
+            return env.data.windows
+        } catch {
+            Log.line("glazewm query windows decode failed: \(error)")
+            return []
+        }
     }
 
     /// Spawns `glazewm sub` and calls `onEvent` for every line received. Blocks
@@ -83,15 +92,20 @@ public final class GlazeClient: Sendable {
         handle.readabilityHandler = { fh in
             let chunk = fh.availableData
             guard !chunk.isEmpty else { return }
-            // Each non-empty line is one event; coalescing happens upstream.
-            if let s = String(data: chunk, encoding: .utf8) {
-                for line in s.split(separator: "\n") where !line.isEmpty {
-                    onEvent()
-                }
-            }
+            // Every line in the chunk is one event, but the exact count doesn't
+            // matter: `onEvent` is a coalesced nudge to re-query, so a line split
+            // across two reads (over- or under-counting by one) is harmless.
+            guard let s = String(data: chunk, encoding: .utf8) else { return }
+            s.split(separator: "\n").forEach { _ in onEvent() }
         }
 
-        do { try proc.run() } catch { return }
+        do {
+            try proc.run()
+        } catch {
+            Log.line("glazewm sub failed to launch (\(binary)): \(error)")
+            handle.readabilityHandler = nil
+            return
+        }
         proc.waitUntilExit()
         handle.readabilityHandler = nil
     }
@@ -103,7 +117,12 @@ public final class GlazeClient: Sendable {
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = FileHandle.nullDevice
-        do { try proc.run() } catch { return nil }
+        do {
+            try proc.run()
+        } catch {
+            Log.line("glazewm \(args.joined(separator: " ")) failed to launch (\(binary)): \(error)")
+            return nil
+        }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         proc.waitUntilExit()
         return String(data: data, encoding: .utf8)
