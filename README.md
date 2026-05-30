@@ -51,6 +51,25 @@ swift test
 
 - Unit tests cover the pure geometry and radius logic with input/output tables.
 - Integration tests cover the reconciler decision and classifier persistence.
+- Benchmarks (`BenchmarkTests`, `LiveBenchmarkTests`, `E2ELatencyBenchmarkTests`) measure the hot paths and double as regression guards.
+
+## Performance
+
+End-to-end switch latency is the time from issuing a real GlazeWM focus command to the border redrawing on screen.
+
+| Metric | Result |
+|---|---|
+| Switch → border redraw (median) | **~70 ms** (66–85 ms) |
+| Pure decision path (geometry/radius/screen-pick) | sub-microsecond per call |
+| AX focused-window read (incl. toolbar detection) | ~1 ms |
+
+The border is event-driven: the focused window is parsed straight from the `glazewm sub` event payload, so a switch no longer spawns a `glazewm query windows` subprocess (~39 ms on this setup). That change cut switch latency from ~195 ms to ~70 ms.
+
+Measured on:
+
+- **MacBook Air (M2, Mac14,2)** — 8 cores, 16 GB
+- **macOS 26.5** (Tahoe, build 25F71)
+- Built-in Liquid Retina display, 2560×1664
 
 ## License
 
