@@ -19,4 +19,4 @@ commit: release
 
 # Register the commit-msg hook for the repo (run once per fresh clone).
 install-hooks:
-	git -C .. config core.hooksPath tools-swift/hooks
+	git -C .. config core.hooksPath tools/hooks

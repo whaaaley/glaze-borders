@@ -1,7 +1,7 @@
-Rule: run `cd tools-swift && make install-hooks` once per fresh clone
+Rule: run `cd tools && make install-hooks` once per fresh clone
 Reason: registers the `commit-msg` hook so every `git commit` is validated automatically
 
-Rule: validate commit messages via `cd tools-swift && make commit MSG='<message>'` before running `git commit`
+Rule: validate commit messages via `cd tools && make commit MSG='<message>'` before running `git commit`
 Reason: enforce conventional commit format deterministically before the message reaches history
 
 Rule: do not pass `--no-verify` to `git commit`
