@@ -100,7 +100,10 @@ public final class Daemon {
         if let focused = latestFocused {
             windows = [focused]
         } else {
+            // Only before the first GlazeWM event lands (startup). Seed the cache
+            // so steady-state never re-queries.
             windows = glaze.queryWindows()
+            latestFocused = windows.first { $0.isBordered && $0.hasFocus }
         }
 
         // The window we actually border is the FRONTMOST app's window (which may
