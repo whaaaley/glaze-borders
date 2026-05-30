@@ -10,3 +10,6 @@ Package.resolved
 *.xcodeproj
 xcuserdata/
 DerivedData/
+
+# Coverage output
+.coverage/
