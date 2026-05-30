@@ -27,7 +27,9 @@ public struct Config {
         "tiling_direction_changed", "monitor_updated",
     ]
     // Coalesce bursts: wait this long after the last nudge before reconciling.
-    public var settle: TimeInterval = 0.08
+    // Kept small so a focus switch (a near-single event) redraws promptly; it
+    // still collapses the rapid multi-event bursts that a close/move produces.
+    public var settle: TimeInterval = 0.016
 
     // When true, the border gets the default macOS window-appear "pop" each time
     // it lands on a newly-focused window (we recreate the overlay window). When
@@ -57,6 +59,10 @@ public final class Daemon {
     private var overlay: Overlay?
     private var lastPlacement: Geometry.Placement?  // last placement painted; skip redundant redraws
     private var lastRadius: CGFloat? // last radius we painted; redraw if it changes
+    // The most recent focused window, parsed from a GlazeWM event payload. Events
+    // that carry no focused window (and the poll/AX observer) reconcile against
+    // this last-known value instead of re-querying.
+    private var latestFocused: GlazeWindow?
     // Persistent, one-way window-type classification keyed by app name. Prevents
     // radius flicker from transient AX misses and survives restarts.
     private let classifier = Classifier()
@@ -66,13 +72,16 @@ public final class Daemon {
         self.cfg = cfg
         self.glaze = glaze
         // The AX observer fires whenever the focused window resizes/moves — even
-        // when GlazeWM emits no event (e.g. alt+f fullscreen). Each fire just
-        // re-reconciles (debounced).
-        self.ax = AXWatcher(onChange: { [weak self] in self?.scheduleReconcile() })
+        // when GlazeWM emits no event (e.g. alt+f fullscreen). It carries no new
+        // GlazeWM window, so it reconciles against the last known one.
+        self.ax = AXWatcher(onChange: { [weak self] in self?.scheduleReconcile(focused: self?.latestFocused) })
     }
 
-    /// Coalesced entry point: many events collapse into one reconcile.
-    func scheduleReconcile() {
+    /// Coalesced entry point: many events collapse into one reconcile. `focused`
+    /// is the focused window parsed from the GlazeWM event payload (nil for the
+    /// safety poll / AX observer, which reuse the last known focused window).
+    func scheduleReconcile(focused: GlazeWindow?) {
+        if let focused { latestFocused = focused }
         guard !reconcileScheduled else { return }
         reconcileScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + cfg.settle) { [weak self] in
@@ -81,11 +90,18 @@ public final class Daemon {
         }
     }
 
-    /// Pull the authoritative window list and border the FOCUSED window only.
-    /// Unfocused windows get no border.
+    /// Border the FOCUSED window only; unfocused windows get no border. Uses the
+    /// focused window from the GlazeWM event (no per-event `query windows`), with
+    /// its real frame read from AX.
     private func reconcile() {
-        // --- Imperative shell: gather inputs via side-effecting I/O ---
-        let windows = glaze.queryWindows()
+        // The focused window comes from the latest event payload, not a query.
+        // The safety poll falls back to a one-off query when we have nothing yet.
+        let windows: [GlazeWindow]
+        if let focused = latestFocused {
+            windows = [focused]
+        } else {
+            windows = glaze.queryWindows()
+        }
 
         // The window we actually border is the FRONTMOST app's window (which may
         // differ from GlazeWM's focus for floating windows like About This Mac).
@@ -180,15 +196,17 @@ public final class Daemon {
         //    main-actor `self` into the background closure.
         let glaze = self.glaze
         let events = self.cfg.events
-        let onNudge: @Sendable () -> Void = { [weak self] in
-            DispatchQueue.main.async { self?.scheduleReconcile() }
+        // Each event delivers the focused window parsed from its payload (or nil);
+        // we forward it so reconcile draws without a per-event query.
+        let onEvent: @Sendable (GlazeWindow?) -> Void = { [weak self] focused in
+            DispatchQueue.main.async { self?.scheduleReconcile(focused: focused) }
         }
         DispatchQueue.global(qos: .userInitiated).async {
             // Back off on repeated immediate exits so a missing/broken `glazewm`
             // can't spin a silent hot-loop; reset once a subscription lasts a while.
             var backoff: TimeInterval = 1.0
             while true {
-                glaze.subscribe(events: events, onEvent: onNudge)
+                glaze.subscribe(events: events, onEvent: onEvent)
                 Log.line("glazewm sub exited; retrying in \(backoff)s")
                 Thread.sleep(forTimeInterval: backoff)
                 backoff = min(backoff * 2, 30.0)
@@ -207,7 +225,7 @@ public final class Daemon {
             nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 // queue: .main delivers on the main thread, but the closure is
                 // nonisolated; assumeIsolated makes the main-actor hop explicit.
-                MainActor.assumeIsolated { self?.scheduleReconcile() }
+                MainActor.assumeIsolated { self?.scheduleReconcile(focused: nil) }
             }
         }
 

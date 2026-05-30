@@ -7,7 +7,7 @@ import Foundation
 // AppKit is bottom-left / y-up — the conversion happens in Overlay, not here.
 
 /// A window as reported by `glazewm query windows`.
-public struct GlazeWindow: Decodable, Equatable {
+public struct GlazeWindow: Decodable, Equatable, Sendable {
     public let id: String
     public let processName: String
     public let hasFocus: Bool
@@ -18,7 +18,7 @@ public struct GlazeWindow: Decodable, Equatable {
     public let state: State
     public let displayState: String
 
-    public struct State: Decodable, Equatable {
+    public struct State: Decodable, Equatable, Sendable {
         public let type: String
         public init(type: String) { self.type = type }
     }
@@ -44,6 +44,28 @@ public struct GlazeWindow: Decodable, Equatable {
     }
 }
 
+/// Accumulates raw pipe bytes and yields complete newline-terminated lines.
+/// `FileHandle.readabilityHandler` invocations are serialized, so the unguarded
+/// mutable buffer is safe; `@unchecked Sendable` documents that we rely on it.
+private final class LineBuffer: @unchecked Sendable {
+    private var pending = Data()
+
+    /// Append a chunk and return any complete lines it completes (without the
+    /// trailing newline). A partial final line is kept for the next chunk.
+    func append(_ chunk: Data) -> [String] {
+        pending.append(chunk)
+        var lines: [String] = []
+        while let nl = pending.firstIndex(of: 0x0A) {
+            let lineData = pending[pending.startIndex..<nl]
+            if !lineData.isEmpty, let s = String(data: lineData, encoding: .utf8) {
+                lines.append(s)
+            }
+            pending.removeSubrange(pending.startIndex...nl)
+        }
+        return lines
+    }
+}
+
 /// Envelope shared by every glazewm IPC response: `{ data, error, success }`.
 private struct Envelope<T: Decodable>: Decodable {
     let data: T
@@ -52,6 +74,41 @@ private struct Envelope<T: Decodable>: Decodable {
 }
 
 private struct WindowsQuery: Decodable { let windows: [GlazeWindow] }
+
+/// One `glazewm sub` event line. Many event types carry the focused container
+/// inline (`focusedContainer`), which lets us skip a separate `query windows`
+/// for the common focus-change case. A container can be a window OR a workspace;
+/// we only care when it's a window, so geometry fields are optional.
+struct SubEvent: Decodable {
+    let data: EventData
+    struct EventData: Decodable {
+        let eventType: String
+        let focusedContainer: FocusedContainer?
+    }
+    /// The focused container. Decodes leniently: workspaces lack window fields.
+    struct FocusedContainer: Decodable {
+        let type: String
+        let id: String
+        let hasFocus: Bool?
+        let x: Int?
+        let y: Int?
+        let width: Int?
+        let height: Int?
+        let state: GlazeWindow.State?
+        let displayState: String?
+
+        /// Promote to a full GlazeWindow when this container is a window with
+        /// complete geometry; nil for workspaces or partial payloads.
+        var asWindow: GlazeWindow? {
+            guard type == "window",
+                  let x, let y, let width, let height,
+                  let state, let displayState else { return nil }
+            return GlazeWindow(id: id, processName: "", hasFocus: hasFocus ?? true,
+                               x: x, y: y, width: width, height: height,
+                               state: state, displayState: displayState)
+        }
+    }
+}
 
 /// Thin client around the `glazewm` CLI: a one-shot `query windows`, and a
 /// long-lived `sub` stream whose every line is just a nudge to re-query.
@@ -77,10 +134,13 @@ public final class GlazeClient: Sendable {
         }
     }
 
-    /// Spawns `glazewm sub` and calls `onEvent` for every line received. Blocks
-    /// the calling thread; run it on a background queue. Returns when the
-    /// subprocess exits (caller is expected to restart it).
-    func subscribe(events: [String], onEvent: @escaping @Sendable () -> Void) {
+    /// Spawns `glazewm sub` and calls `onEvent` for every event line received,
+    /// passing the focused window parsed straight from the event payload (or nil
+    /// when the event carries no focused window). Parsing the payload avoids a
+    /// separate ~75ms `query windows` per event — the dominant switch-latency
+    /// cost. Blocks the calling thread; run on a background queue. Returns when
+    /// the subprocess exits (caller is expected to restart it).
+    func subscribe(events: [String], onEvent: @escaping @Sendable (GlazeWindow?) -> Void) {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
         proc.arguments = ["sub", "--events"] + events
@@ -88,15 +148,18 @@ public final class GlazeClient: Sendable {
         proc.standardOutput = pipe
         proc.standardError = FileHandle.nullDevice
 
+        // `glazewm sub` emits one JSON object per line, but a read may split a
+        // line across chunks — buffer until we see a newline before decoding.
+        let buffer = LineBuffer()
         let handle = pipe.fileHandleForReading
         handle.readabilityHandler = { fh in
             let chunk = fh.availableData
             guard !chunk.isEmpty else { return }
-            // Every line in the chunk is one event, but the exact count doesn't
-            // matter: `onEvent` is a coalesced nudge to re-query, so a line split
-            // across two reads (over- or under-counting by one) is harmless.
-            guard let s = String(data: chunk, encoding: .utf8) else { return }
-            s.split(separator: "\n").forEach { _ in onEvent() }
+            for line in buffer.append(chunk) {
+                guard let data = line.data(using: .utf8) else { onEvent(nil); continue }
+                let event = try? JSONDecoder().decode(SubEvent.self, from: data)
+                onEvent(event?.data.focusedContainer?.asWindow)
+            }
         }
 
         do {
