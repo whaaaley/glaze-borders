@@ -1,4 +1,4 @@
-# Task runner for glaze-borders (like deno.json tasks).
+# Task runner for glaze-borders.
 #
 # swift-testing and llvm-cov require the full Xcode toolchain (the Command Line
 # Tools instance lacks both), so we point SwiftPM at Xcode here without changing
